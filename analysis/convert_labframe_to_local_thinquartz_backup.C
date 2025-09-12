@@ -1,45 +1,31 @@
 /* 	
-    This file provides utility functions to convert detector hit data from the lab frame
-    to the local coordinate system of the main detectors (thin quartz).
-    
-    - The main function is `convert_labframe_to_local_thinquartz`, which takes a single hit
-      and returns a `mainquartz_local_info` struct with local coordinates, rotated momentum,
-      local angles, and detector ID.
-    - Several helper functions are provided for coordinate and cut calculations.
-    - The detector geometry parameters are stored in `maindetector_detid_map`.
-	---Important Note---
-	This function can only be used for the thin quartz detectors which my naming system and the hits on the front plane or wedge plane of the detector!
-	if you want to use it for other names or other detectors, please modify the map and the cut function accordingly.
-	if you want to include the back face of the detector, please comment out the is_edge part in the main function.
+	This file can convert the data in the lab frame to local coordinate data for the main detectors.
+ 	Which can help use calculate the yield for different detectors. It reads the hit data from a list
+	of ROOT files, applies geometric cuts, calculates local coordinates,and saves the results in a 
+	new ROOT file. 
+	how to run:
+	reroot
+	.x convert_labframe_to_local_thinquartz("simana/sim/output/elastic-ratecalculation_new8/filelist.txt", "simana/asset/files/elastic_local1.root")
+	it will produce a ROOT file with the local coordinates and other information for each hit.
 
-    How to use:
-    -----------
-    1. Include this file in your ROOT macro or C++ analysis script.
-    2. For each hit (of type RemollHit), call:
-           mainquartz_local_info info = convert_labframe_to_local_thinquartz(hit);
-    3. Use the returned struct for further analysis or histogramming.
-
-    All functions are documented below.
 */
+
+
 #include <string>
 #include <vector>
-#include <map>
-#include <tuple>
-#include <cmath>
-#include <TVector3.h>
-#include <TRotation.h>
 
 // Type definitions for detector hit and hit list
 typedef remollGenericDetectorHit_t RemollHit;
 typedef std::vector<RemollHit> hit_list;
 
 // Structure to hold processed hit information
-struct mainquartz_local_info {
+struct info {
     double lx;      // Local x coordinate
     double ly;      // Local y coordinate
     double x;       // Global x coordinate
     double y;       // Global y coordinate
     double z;       // Global z coordinate
+    double e;       // Energy
     double lpx;     // Rotated px
     double lpy;     // Rotated py
     double lpz;     // Rotated pz
@@ -50,8 +36,7 @@ struct mainquartz_local_info {
 };
 
 // Detector parameter map: key is detector ID, value is tuple of parameters
-// you can change the parameters here to match your detector setup
-std::map <int,std::tuple<double,double,double,double,double,double,double>> maindetector_detid_map{
+std::map <int,std::tuple<double,double,double,double,double,double,double>> params{
 	{0x1010,{2.99230923889332,731.72,0,1070.8,10,15,90}},
 	{0x2010,{3.00224758033953,762.49,0,798.78,10,30,90}},
 	{0x3010,{3.00224758033941,808.24,0,525.97,10,30,90}},
@@ -405,50 +390,82 @@ TVector3 cal_newP(TVector3 point, double rotateZ, double rotateX){
 }
 
 /**
- * @brief Convert a single hit from lab frame to local detector coordinates.
- *        Returns a struct with all relevant local and global information.
- * @param hit The detector hit (RemollHit).
- * @return mainquartz_local_info struct with local coordinates, rotated momentum, angles, and detector ID.
+ * @brief Main analysis function. Reads hit data, applies cuts, calculates local coordinates, and saves results.
+ * \param filelist Path to the text file containing list of ROOT files to analyze. Each line of the file should be path to a ROOT file.
+ * \param output_filename Name of the output ROOT file to save processed data. Default is "local_filename.root".
  *
- * Usage example:
- *     mainquartz_local_info info = convert_labframe_to_local_thinquartz(hit);
+ * Usage: Call convert_labframe_to_local_thinquartz() from your ROOT macro or main function.
+ *
+ * Steps:
+ * 1. Reads file list from filelist.txt. each line should contain a path to a ROOT file.
+ * 2. Loads hit data using ROOT RDataFrame.
+ * 3. For each hit, applies selection and geometric cuts.
+ * 4. Calculates local coordinates and rotated momentum.
+ * 5. Stores results in a vector of info structs.
+ * 6. Saves processed data to elastic_local1.root.
  */
-mainquartz_local_info convert_labframe_to_local_thinquartz(RemollHit hit){
-	mainquartz_local_info info;
-	auto [angleX, x, y, z, thickness, height, angleZ] = maindetector_detid_map[hit.det];
-	double rotate_z = angleZ;
-	double rotate_x = angleX;
+void convert_labframe_to_local_thinquartz(std::string filelist,std::string output_filename="local_filename.root"){
+	auto files = readlines(filelist);
+	int nof = files.size();
 
-	bool is_edge = (cut_front(angleX,x,y,z,thickness,height,hit)||cut_wedge(angleX,x,y,z,thickness,height,hit));
-	//if you want to include the back face, just comment out the is_edge part
-	if(!is_edge){
-		std::cerr << "Error: hit not in front face or wedge face" << std::endl;
-        return mainquartz_local_info{};
-	}
-	info.lx = cal_xlocal(hit.ph,hit.r,rotate_z);
-	info.ly = cal_ylocal(hit.z,z+22198,rotate_x,thickness);
-	if((hit.det&0x000f) == 1){
-		info.lx = cal_xlocal(hit.ph,hit.r,rotate_z)-80;
-	}
-	if((hit.det&0x000f)==3){
-		info.lx = cal_xlocal(hit.ph,hit.r,rotate_z)+80;
-	}
-	if(cut_wedge(angleX,x,y,z,thickness,height,hit)){
-		info.ly = cal_ylocal_wedge(hit.z,z+22198,rotate_x,thickness,height);
-	}
-	TVector3 point(hit.px, hit.py, hit.pz);
-	TVector3 rotatedMomentum = cal_newP(point,rotate_z,rotate_x);
-	//all the angle here is the angle between the momentum and the z axis
-	info.lpx = rotatedMomentum.X(); 
-	info.lpy = rotatedMomentum.Y();
-	info.lpz = rotatedMomentum.Z();
-	info.lthx = atan(rotatedMomentum.X()/rotatedMomentum.Z())*180/M_PI;
-	info.lthy = atan(rotatedMomentum.Y()/rotatedMomentum.Z())*180/M_PI;
-	info.ltheta = atan(sqrt(rotatedMomentum.X()*rotatedMomentum.X()+rotatedMomentum.Y()*rotatedMomentum.Y())/rotatedMomentum.Z())*180/M_PI;
-	info.x = hit.x;
-	info.y = hit.y;
-	info.z = hit.z;
-	info.detid = hit.det;
-	return info;
-}	
+	std::cout << "Processing " << nof<<" files. "<< std::endl;
+	ROOT::RDataFrame df("T",files);
+	
+	double n = 0;
+	std::vector<info> v;
+	df.Foreach([&](hit_list hits, double rate){
+		for (auto& hit: hits){
+			if(abs(hit.pid) == 11&& hit.k > 1 && hit.pz > 0 && (hit.trid ==1 || hit.trid ==2)){
+				auto [angleX, x, y, z, thickness, height, angleZ] = params[hit.det];
+				if(cut_front(angleX,x,y,z,thickness,height,hit)||cut_wedge(angleX,x,y,z,thickness,height,hit)){
+					n++;
+			
+					double rotate_z = angleZ;
+					double rotate_x = angleX;
+					double localx = cal_xlocal(hit.ph,hit.r,rotate_z);;
+					double localy = cal_ylocal(hit.z,z+22198,rotate_x,thickness);
+					if((hit.det&0x000f) == 1){
+						localx = cal_xlocal(hit.ph,hit.r,rotate_z)-80;
+					}
+					if((hit.det&0x000f)==3){
+						localx = cal_xlocal(hit.ph,hit.r,rotate_z)+80;
+					}
+					if(cut_wedge(angleX,x,y,z,thickness,height,hit)){
+						localy = cal_ylocal_wedge(hit.z,z+22198,rotate_x,thickness,height);
+					}
+					TVector3 point(hit.px, hit.py, hit.pz);
+					TVector3 rotatedMomentum = cal_newP(point,rotate_z,rotate_x);
+					double angleX = atan(rotatedMomentum.X()/rotatedMomentum.Z())*180/M_PI;
+					double angleY = atan(rotatedMomentum.Y()/rotatedMomentum.Z())*180/M_PI;
+					double angleTheta = atan(sqrt(rotatedMomentum.X()*rotatedMomentum.X()+rotatedMomentum.Y()*rotatedMomentum.Y())/rotatedMomentum.Z());
 
+					info new_data;
+					new_data.lx = localx;
+					new_data.ly = localy;
+						
+					new_data.x = hit.x;
+					new_data.y = hit.y;
+					new_data.z = hit.z;
+					new_data.e = hit.e;
+					new_data.lpx = rotatedMomentum.X(); 
+					new_data.lpy = rotatedMomentum.Y();
+					new_data.lpz = rotatedMomentum.Z();
+					new_data.lthx = angleX;
+					new_data.lthy = angleY;
+					new_data.ltheta = angleTheta;
+					new_data.detid = hit.det;
+					v.push_back(new_data);
+					//nice.unlock();
+				}
+			}
+		}
+
+	},{"hit","rate"});
+	std::cout << n << " events processed." << std::endl;
+
+	int i = 0;
+	ROOT::RDataFrame out(v.size());  //define a RDataFrame name out
+	auto file = out.Define("info",[&i,&v](){return v.at(i++);}); //set the new variable to RDataFrame
+	file.Snapshot("T",output_filename); //define the name of the file to save
+	cout << v.size() << " records produced into file: "<<output_filename << endl;
+}
