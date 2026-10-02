@@ -193,13 +193,13 @@ endif()
 #----------------------------------------------------------------------------
 # Pythia6 (optional)
 #
-find_package(Pythia6 QUIET)
-if(PYTHIA6_FOUND)
-  message(STATUS "Pythia6 found --> building with Pythia6 enabled.")
-  add_definitions(-DG4LIB_USE_PYTHIA)
-else()
-  set(PYTHIA6_LIBRARIES "")
-endif()
+#find_package(Pythia6 QUIET)
+#if(PYTHIA6_FOUND)
+#  message(STATUS "Pythia6 found --> building with Pythia6 enabled.")
+#  add_definitions(-DG4LIB_USE_PYTHIA)
+#else()
+#  set(PYTHIA6_LIBRARIES "")
+#endif()
 
 
 #----------------------------------------------------------------------------
